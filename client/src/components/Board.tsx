@@ -45,9 +45,11 @@ export function Board({
       ? `url(${customBoardImg}) center/cover`
       : themeVars.bg,
     borderColor: themeVars.border,
-  };
+    '--board-zoom': zoom,
+  } as React.CSSProperties;
 
   const boardRef = useRef<HTMLDivElement>(null);
+  const battleClass = state.lastBattle ? `battle-${state.lastBattle.special || state.lastBattle.outcome}` : '';
 
   // Keyboard navigation
   useEffect(() => {
@@ -70,7 +72,7 @@ export function Board({
 
       <div className="board-scroll">
         <div
-          className={`board-wrap board-theme-${boardTheme}`}
+          className={`board-wrap board-theme-${boardTheme} ${state.lastBattle ? 'battle-shake' : ''}`}
           style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', ...boardStyle }}
           ref={boardRef}
           tabIndex={-1}
@@ -96,6 +98,7 @@ export function Board({
                   (state.lastMove.from.row === row && state.lastMove.from.col === col) ||
                   (state.lastMove.to.row === row && state.lastMove.to.col === col)
                 );
+                const isBattleSquare = state.lastBattle?.at.row === row && state.lastBattle.at.col === col;
 
                 const squareBg = boardTheme === 'custom' && customBoardImg
                   ? isLight ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.18)'
@@ -113,6 +116,7 @@ export function Board({
                       isSelected ? 'selected' : '',
                       isPreMove ? 'premove' : '',
                       lastMove ? 'last-move' : '',
+                      isBattleSquare ? `battle-impact ${battleClass}` : '',
                     ].join(' ')}
                     style={{ background: squareBg }}
                     onClick={() => onSquareClick(row, col)}

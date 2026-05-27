@@ -281,6 +281,10 @@ button {
   box-shadow: 0 24px 90px rgba(190, 18, 60, 0.34);
 }
 
+.board-wrap.battle-shake {
+  animation: boardBattleShake 360ms cubic-bezier(.2,.8,.2,1);
+}
+
 .file-labels {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
@@ -358,6 +362,75 @@ button {
 
 .square.last-move {
   background: rgba(253, 224, 71, 0.16);
+}
+
+.square.battle-impact {
+  z-index: 2;
+  overflow: visible;
+  animation: impactFlash 620ms ease-out;
+}
+
+.square.battle-impact .piece-token {
+  animation: survivorPop 620ms cubic-bezier(.2,.9,.25,1.25);
+}
+
+.square.battle-impact::before,
+.square.battle-impact::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  inset: 50%;
+  translate: -50% -50%;
+  border-radius: 999px;
+}
+
+.square.battle-impact::before {
+  width: 28%;
+  aspect-ratio: 1;
+  border: 3px solid rgba(253, 224, 71, 0.95);
+  box-shadow:
+    0 0 18px rgba(253, 224, 71, 0.85),
+    0 0 42px rgba(248, 113, 113, 0.55);
+  animation: impactRing 720ms ease-out forwards;
+}
+
+.square.battle-impact::after {
+  width: 8px;
+  height: 8px;
+  background: rgb(254, 240, 138);
+  box-shadow:
+    0 -34px 0 2px rgba(254, 240, 138, 0.95),
+    28px -22px 0 1px rgba(248, 113, 113, 0.9),
+    36px 4px 0 2px rgba(251, 191, 36, 0.95),
+    22px 28px 0 1px rgba(110, 231, 183, 0.9),
+    -6px 38px 0 2px rgba(248, 113, 113, 0.85),
+    -32px 18px 0 1px rgba(254, 240, 138, 0.95),
+    -36px -12px 0 2px rgba(251, 191, 36, 0.9),
+    -16px -32px 0 1px rgba(110, 231, 183, 0.85);
+  animation: sparkBurst 720ms ease-out forwards;
+}
+
+.square.battle-flag-capture::before {
+  border-color: rgba(250, 204, 21, 1);
+  box-shadow:
+    0 0 20px rgba(250, 204, 21, 0.95),
+    0 0 70px rgba(250, 204, 21, 0.75);
+}
+
+.square.battle-spy-assassination::before,
+.square.battle-private-trap::before {
+  border-color: rgba(52, 211, 153, 1);
+  box-shadow:
+    0 0 20px rgba(52, 211, 153, 0.95),
+    0 0 62px rgba(45, 212, 191, 0.7);
+}
+
+.square.battle-both::before {
+  border-color: rgba(248, 113, 113, 1);
+  box-shadow:
+    0 0 18px rgba(248, 113, 113, 0.95),
+    0 0 58px rgba(239, 68, 68, 0.65);
 }
 
 .square.premove {
@@ -605,6 +678,70 @@ button {
   from {
     transform: scale(0.84);
     opacity: 0.5;
+  }
+}
+
+@keyframes boardBattleShake {
+  0%, 100% { transform: translateX(0) scale(var(--board-zoom, 1)); }
+  18% { transform: translateX(-4px) scale(var(--board-zoom, 1)); }
+  36% { transform: translateX(5px) scale(var(--board-zoom, 1)); }
+  54% { transform: translateX(-3px) scale(var(--board-zoom, 1)); }
+  72% { transform: translateX(2px) scale(var(--board-zoom, 1)); }
+}
+
+@keyframes impactFlash {
+  0% {
+    filter: brightness(1);
+    box-shadow: inset 0 0 0 0 rgba(253, 224, 71, 0);
+  }
+  24% {
+    filter: brightness(1.9) saturate(1.35);
+    box-shadow: inset 0 0 0 4px rgba(253, 224, 71, 0.92), 0 0 28px rgba(253, 224, 71, 0.58);
+  }
+  100% {
+    filter: brightness(1);
+    box-shadow: inset 0 0 0 0 rgba(253, 224, 71, 0);
+  }
+}
+
+@keyframes impactRing {
+  0% {
+    opacity: 1;
+    transform: scale(0.3);
+  }
+  70% {
+    opacity: 0.75;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(5.2);
+  }
+}
+
+@keyframes sparkBurst {
+  0% {
+    opacity: 1;
+    transform: scale(0.25) rotate(0deg);
+  }
+  60% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9) rotate(28deg);
+  }
+}
+
+@keyframes survivorPop {
+  0% {
+    transform: scale(0.88) rotate(-3deg);
+  }
+  35% {
+    transform: scale(1.14) rotate(2deg);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 0 30px rgba(253, 224, 71, 0.7);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
   }
 }
 
