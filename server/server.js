@@ -2,12 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import http from 'http';
 import { Server } from 'socket.io';
+import jwt from 'jsonwebtoken';
+import { createUser, getLeaderboard, getUser, recordResult, updateProfile, validateUser } from './db.js';
 
 const PORT = process.env.PORT || 3000;
 const ROWS = 8;
 const COLS = 9;
 const MAX_CHAT = 80;
 const DEFAULT_TURN_SECONDS = 60;
+const JWT_SECRET = process.env.JWT_SECRET || 'gotg-local-dev-secret';
 
 const PIECES = [
   ['5-Star General', '5G', 14, 1],
@@ -49,7 +52,9 @@ const squareName = (row, col) => `${String.fromCharCode(65 + col)}${row + 1}`;
 const createRoom = (code = randomCode()) => ({
   code,
   players: { red: null, blue: null },
+  accounts: { red: null, blue: null },
   sessions: { red: null, blue: null },
+  spectators: new Set(),
   ready: { red: false, blue: false },
   armies: { red: createArmy('red'), blue: createArmy('blue') },
   board: emptyBoard(),
@@ -60,7 +65,10 @@ const createRoom = (code = randomCode()) => ({
   pendingFlagWin: null,
   countdownEndsAt: null,
   turnEndsAt: null,
+  turnStartedAt: null,
   turnSeconds: DEFAULT_TURN_SECONDS,
+  increment: 0,
+  timeBank: { red: DEFAULT_TURN_SECONDS * 1000, blue: DEFAULT_TURN_SECONDS * 1000 },
   revealAll: false,
   rematchReady: { red: false, blue: false },
   revealMode: 'hidden',
@@ -69,6 +77,7 @@ const createRoom = (code = randomCode()) => ({
   chat: [],
   lastBattle: null,
   lastMove: null,
+  ratedResultRecorded: false,
   placementMoves: { red: [], blue: [] },
   drawOffer: null,
   stats: {
@@ -91,6 +100,33 @@ const turnTimers = new Map();
 
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
+}
+
+function userFromToken(token) {
+  if (!token) return null;
+  try {
+    return jwt.verify(String(token), JWT_SECRET).username || null;
+  } catch {
+    return null;
+  }
+}
+
+function signUser(user) {
+  return jwt.sign({ username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+function roomProfile(room, player) {
+  const user = getUser(room.accounts[player]);
+  if (user) return { ...user, guest: false };
+  return {
+    username: `${player.toUpperCase()} Guest`,
+    elo: null,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    avatar: null,
+    guest: true
+  };
 }
 
 function findPiece(room, pieceId) {
@@ -250,13 +286,17 @@ function longestSurvivor(room) {
 
 function serializeRoom(room, viewer) {
   const revealAll = room.revealAll && Boolean(room.winner);
+  const spectator = viewer === 'spectator';
+  const playerView = spectator ? 'red' : viewer;
   return {
     code: room.code,
-    you: viewer,
-    opponent: opponentOf(viewer),
+    you: playerView,
+    opponent: opponentOf(playerView),
     phase: room.phase,
     turn: room.turn,
     ready: room.ready,
+    spectators: room.spectators.size,
+    profiles: { red: roomProfile(room, 'red'), blue: roomProfile(room, 'blue') },
     connected: { red: Boolean(room.players.red), blue: Boolean(room.players.blue) },
     winner: room.winner,
     winReason: room.winReason,
@@ -264,6 +304,8 @@ function serializeRoom(room, viewer) {
     countdownEndsAt: room.countdownEndsAt,
     turnEndsAt: room.turnEndsAt,
     turnSeconds: room.turnSeconds,
+    increment: room.increment,
+    timeBank: room.timeBank,
     revealAll: room.revealAll,
     revealMode: room.revealMode,
     rematchReady: room.rematchReady,
@@ -271,25 +313,33 @@ function serializeRoom(room, viewer) {
     stats: { ...room.stats, longestSurvivor: longestSurvivor(room) },
     counts: pieceCounts(room),
     board: room.board.map((row) =>
-      row.map((pieceId) => pieceId ? publicPiece(findPiece(room, pieceId), viewer, revealAll) : null)
+      row.map((pieceId) => pieceId ? publicPiece(findPiece(room, pieceId), spectator ? null : viewer, revealAll) : null)
     ),
-    tray: room.armies[viewer].filter((piece) => piece.status === 'tray').map((piece) => publicPiece(piece, viewer, revealAll)),
+    tray: spectator ? [] : room.armies[viewer].filter((piece) => piece.status === 'tray').map((piece) => publicPiece(piece, viewer, revealAll)),
     captured: {
       red: room.armies.red.filter((piece) => piece.status === 'captured').map((piece) => publicPiece(piece, viewer, revealAll)),
       blue: room.armies.blue.filter((piece) => piece.status === 'captured').map((piece) => publicPiece(piece, viewer, revealAll))
     },
-    lastBattle: publicBattle(room, viewer),
+    lastBattle: publicBattle(room, spectator ? null : viewer),
     lastMove: room.lastMove,
     eliminatedLog: room.eliminatedLog,
     chat: room.chat,
-    history: room.history
+    history: room.history,
+    isSpectator: spectator
   };
 }
 
 function broadcast(room) {
+  if (room.winner && !room.ratedResultRecorded) {
+    recordResult(room.accounts.red, room.accounts.blue, room.winner);
+    room.ratedResultRecorded = true;
+  }
   for (const player of ['red', 'blue']) {
     const socketId = room.players[player];
     if (socketId) io.to(socketId).emit('state', serializeRoom(room, player));
+  }
+  for (const socketId of room.spectators) {
+    io.to(socketId).emit('state', serializeRoom(room, 'spectator'));
   }
 }
 
@@ -298,20 +348,38 @@ function cancelTurnTimer(room) {
   if (timer) clearTimeout(timer);
   turnTimers.delete(room.code);
   room.turnEndsAt = null;
+  room.turnStartedAt = null;
+}
+
+function applyElapsed(room, player) {
+  if (!room.turnStartedAt) return;
+  const elapsed = Date.now() - room.turnStartedAt;
+  room.timeBank[player] = Math.max(0, room.timeBank[player] - elapsed);
+  room.turnStartedAt = null;
 }
 
 function scheduleTurnTimer(room) {
   cancelTurnTimer(room);
   if (room.phase !== 'playing' || room.winner) return;
-  room.turnEndsAt = Date.now() + room.turnSeconds * 1000;
+  const duration = room.increment > 0 ? room.timeBank[room.turn] : room.turnSeconds * 1000;
+  room.turnStartedAt = Date.now();
+  room.turnEndsAt = room.turnStartedAt + duration;
   turnTimers.set(room.code, setTimeout(() => {
     if (room.phase !== 'playing' || room.winner) return;
     const timedOut = room.turn;
-    addHistory(room, `${timedOut.toUpperCase()} timed out and passed.`, 'system');
-    room.turn = opponentOf(timedOut);
-    scheduleTurnTimer(room);
+    if (room.increment > 0) {
+      room.timeBank[timedOut] = 0;
+      room.winner = opponentOf(timedOut);
+      room.winReason = `${timedOut.toUpperCase()} lost on time.`;
+      addHistory(room, room.winReason, 'win');
+      cancelTurnTimer(room);
+    } else {
+      addHistory(room, `${timedOut.toUpperCase()} timed out and passed.`, 'system');
+      room.turn = opponentOf(timedOut);
+      scheduleTurnTimer(room);
+    }
     broadcast(room);
-  }, room.turnSeconds * 1000));
+  }, duration));
 }
 
 function cancelCountdown(room) {
@@ -331,6 +399,7 @@ function beginCountdown(room) {
     if (room.ready.red && room.ready.blue && room.players.red && room.players.blue && !room.winner) {
       room.phase = 'playing';
       room.turn = 'red';
+      room.timeBank = { red: room.turnSeconds * 1000, blue: room.turnSeconds * 1000 };
       room.countdownEndsAt = null;
       addHistory(room, 'Battle started. Red moves first.', 'system');
       scheduleTurnTimer(room);
@@ -381,6 +450,8 @@ function legalMoveExists(room, player) {
 
 function finishMove(room, movingPlayer) {
   if (room.winner) return;
+  applyElapsed(room, movingPlayer);
+  if (room.increment > 0) room.timeBank[movingPlayer] += room.increment * 1000;
   const pending = room.pendingFlagWin;
   if (pending && pending.player !== movingPlayer) {
     const flag = room.armies[pending.player].find((piece) => piece.code === 'FLG');
@@ -436,15 +507,23 @@ function randomizePlacement(room, player, strategy = 'balanced') {
   room.ready[player] = false;
 }
 
-function attachPlayer(socket, room, player, clientId) {
+function attachPlayer(socket, room, player, clientId, username = null) {
   if (room.players[player] && room.players[player] !== socket.id) {
     io.to(room.players[player]).emit('notice', 'Your seat was opened in another tab.');
   }
+  room.spectators.delete(socket.id);
   room.players[player] = socket.id;
+  if (username) room.accounts[player] = username;
   if (clientId) room.sessions[player] = String(clientId);
   socketRoom.set(socket.id, { code: room.code, player });
   socket.join(room.code);
   if (room.phase === 'playing' && room.players.red && room.players.blue) scheduleTurnTimer(room);
+}
+
+function attachSpectator(socket, room) {
+  room.spectators.add(socket.id);
+  socketRoom.set(socket.id, { code: room.code, player: 'spectator', spectator: true });
+  socket.join(room.code);
 }
 
 function resetRoomForRematch(room) {
@@ -457,9 +536,12 @@ function resetRoomForRematch(room) {
   room.turn = 'red';
   room.winner = null;
   room.winReason = '';
+  room.ratedResultRecorded = false;
   room.pendingFlagWin = null;
   room.countdownEndsAt = null;
   room.turnEndsAt = null;
+  room.turnStartedAt = null;
+  room.timeBank = { red: room.turnSeconds * 1000, blue: room.turnSeconds * 1000 };
   room.revealAll = false;
   room.rematchReady = { red: false, blue: false };
   room.history = [];
@@ -484,7 +566,44 @@ function resetRoomForRematch(room) {
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '1mb' }));
 app.get('/health', (_, res) => res.json({ ok: true }));
+app.post('/auth/register', async (req, res) => {
+  try {
+    const user = await createUser(req.body?.username, req.body?.password);
+    res.json({ user, token: signUser(user) });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Could not register.' });
+  }
+});
+app.post('/auth/login', async (req, res) => {
+  const user = await validateUser(req.body?.username, req.body?.password);
+  if (!user) return res.status(401).json({ error: 'Invalid username or password.' });
+  res.json({ user, token: signUser(user) });
+});
+app.get('/me', (req, res) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const username = userFromToken(token);
+  const user = username ? getUser(username) : null;
+  if (!user) return res.status(401).json({ error: 'Not signed in.' });
+  res.json({ user });
+});
+app.post('/profile', (req, res) => {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const username = userFromToken(token);
+  if (!username) return res.status(401).json({ error: 'Not signed in.' });
+  try {
+    res.json({ user: updateProfile(username, { avatar: req.body?.avatar }) });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Could not update profile.' });
+  }
+});
+app.get('/leaderboard', (_, res) => res.json({ entries: getLeaderboard(20) }));
+app.get('/profile/:username', (req, res) => {
+  const user = getUser(req.params.username);
+  if (!user) return res.status(404).json({ error: 'Profile not found.' });
+  res.json({ user });
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -495,32 +614,38 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   socket.emit('connected', { id: socket.id });
 
-  socket.on('createRoom', ({ clientId } = {}, ack) => {
+  socket.on('createRoom', ({ clientId, token } = {}, ack) => {
     let code = randomCode();
     while (rooms.has(code)) code = randomCode();
     const room = createRoom(code);
     room.phase = 'setup';
-    attachPlayer(socket, room, 'red', clientId);
+    attachPlayer(socket, room, 'red', clientId, userFromToken(token));
     rooms.set(code, room);
     ack?.({ ok: true, code, player: 'red' });
     broadcast(room);
   });
 
-  socket.on('joinRoom', ({ code, clientId } = {}, ack) => {
+  socket.on('joinRoom', ({ code, clientId, token, spectator } = {}, ack) => {
     const room = rooms.get(normalizeCode(code));
     if (!room) return ack?.({ ok: false, error: 'Room not found.' });
+    if (spectator) {
+      attachSpectator(socket, room);
+      addHistory(room, 'A spectator joined the command table.', 'system');
+      ack?.({ ok: true, code: room.code });
+      return broadcast(room);
+    }
     if (room.players.blue && room.players.blue !== socket.id) return ack?.({ ok: false, error: 'Room is full.' });
-    attachPlayer(socket, room, 'blue', clientId);
+    attachPlayer(socket, room, 'blue', clientId, userFromToken(token));
     addHistory(room, 'Blue joined the command table.', 'system');
     ack?.({ ok: true, code: room.code, player: 'blue' });
     broadcast(room);
   });
 
-  socket.on('reconnectRoom', ({ code, player, clientId } = {}, ack) => {
+  socket.on('reconnectRoom', ({ code, player, clientId, token } = {}, ack) => {
     const room = rooms.get(normalizeCode(code));
     if (!room || !['red', 'blue'].includes(player)) return ack?.({ ok: false, error: 'Saved room is no longer active.' });
     if (!clientId || room.sessions[player] !== String(clientId)) return ack?.({ ok: false, error: 'Saved seat could not be verified.' });
-    attachPlayer(socket, room, player, clientId);
+    attachPlayer(socket, room, player, clientId, userFromToken(token));
     addHistory(room, `${player.toUpperCase()} reconnected.`, 'system');
     ack?.({ ok: true, code: room.code, player });
     broadcast(room);
@@ -528,7 +653,7 @@ io.on('connection', (socket) => {
 
   socket.on('placePiece', ({ pieceId, row, col } = {}, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || !['setup', 'countdown'].includes(room.phase)) return ack?.({ ok: false, error: 'Placement is closed.' });
     if (!Number.isInteger(row) || !Number.isInteger(col) || row < 0 || row >= ROWS || col < 0 || col >= COLS) {
@@ -553,7 +678,7 @@ io.on('connection', (socket) => {
 
   socket.on('undoPlacement', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || !['setup', 'countdown'].includes(room.phase)) return ack?.({ ok: false, error: 'Undo is only available during placement.' });
     const last = room.placementMoves[meta.player].pop();
@@ -579,7 +704,7 @@ io.on('connection', (socket) => {
 
   socket.on('randomizePlacement', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || !['setup', 'countdown'].includes(room.phase)) return ack?.({ ok: false, error: 'Randomize is only available during placement.' });
     randomizePlacement(room, meta.player, _?.strategy);
@@ -587,12 +712,16 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
-  socket.on('updateSettings', ({ turnSeconds, revealMode } = {}, ack) => {
+  socket.on('updateSettings', ({ turnSeconds, revealMode, increment } = {}, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || !['setup', 'countdown'].includes(room.phase)) return ack?.({ ok: false, error: 'Settings can only change before battle.' });
-    if (Number.isInteger(turnSeconds) && turnSeconds >= 15 && turnSeconds <= 180) room.turnSeconds = turnSeconds;
+    if (Number.isInteger(turnSeconds) && turnSeconds >= 15 && turnSeconds <= 180) {
+      room.turnSeconds = turnSeconds;
+      room.timeBank = { red: turnSeconds * 1000, blue: turnSeconds * 1000 };
+    }
+    if (Number.isInteger(increment) && increment >= 0 && increment <= 30) room.increment = increment;
     if (['hidden', 'classic'].includes(revealMode)) room.revealMode = revealMode;
     cancelCountdown(room);
     room.ready.red = false;
@@ -603,7 +732,7 @@ io.on('connection', (socket) => {
 
   socket.on('resetPlacement', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     resetPlacement(room, meta.player);
     ack?.({ ok: true });
@@ -612,7 +741,7 @@ io.on('connection', (socket) => {
 
   socket.on('ready', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room.players.red || !room.players.blue) return ack?.({ ok: false, error: 'Waiting for both players to connect.' });
     const error = validateSetup(room, meta.player);
@@ -626,7 +755,7 @@ io.on('connection', (socket) => {
 
   socket.on('movePiece', ({ pieceId, row, col } = {}, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || room.phase !== 'playing' || room.winner) return ack?.({ ok: false, error: 'The game is not active.' });
     if (!room.players.red || !room.players.blue) return ack?.({ ok: false, error: 'Opponent is disconnected. Board is paused.' });
@@ -712,7 +841,10 @@ io.on('connection', (socket) => {
       if (flag?.status !== 'board' || flag.row !== backRow(flag.owner)) room.pendingFlagWin = null;
     }
 
-    if (room.winner) cancelTurnTimer(room);
+    if (room.winner) {
+      applyElapsed(room, meta.player);
+      cancelTurnTimer(room);
+    }
     if (!room.winner) finishMove(room, meta.player);
     ack?.({ ok: true });
     broadcast(room);
@@ -720,7 +852,7 @@ io.on('connection', (socket) => {
 
   socket.on('reaction', ({ text } = {}, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
     if (!clean) return ack?.({ ok: false, error: 'Reaction is empty.' });
@@ -732,7 +864,7 @@ io.on('connection', (socket) => {
 
   socket.on('revealAll', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room?.winner) return ack?.({ ok: false, error: 'Reveal All is available after the game.' });
     room.revealAll = true;
@@ -743,7 +875,7 @@ io.on('connection', (socket) => {
 
   socket.on('rematch', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room?.winner) return ack?.({ ok: false, error: 'Finish this game before rematching.' });
     room.rematchReady[meta.player] = true;
@@ -755,19 +887,20 @@ io.on('connection', (socket) => {
 
   socket.on('resign', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || room.winner) return ack?.({ ok: false, error: 'Game is already over.' });
     room.winner = opponentOf(meta.player);
     room.winReason = `${meta.player.toUpperCase()} resigned.`;
     addHistory(room, room.winReason, 'win');
+    cancelTurnTimer(room);
     ack?.({ ok: true });
     broadcast(room);
   });
 
   socket.on('offerDraw', (_, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     if (!room || room.winner) return ack?.({ ok: false, error: 'Game is already over.' });
     room.drawOffer = meta.player;
@@ -776,9 +909,27 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  socket.on('acceptDraw', (_, ack) => {
+    const meta = socketRoom.get(socket.id);
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
+    const room = rooms.get(meta.code);
+    if (!room || room.winner) return ack?.({ ok: false, error: 'Game is already over.' });
+    if (!room.drawOffer || room.drawOffer === meta.player) return ack?.({ ok: false, error: 'No opponent draw offer to accept.' });
+    room.winReason = 'Draw agreed.';
+    room.phase = 'playing';
+    addHistory(room, 'Draw agreed.', 'win');
+    cancelTurnTimer(room);
+    if (!room.ratedResultRecorded) {
+      recordResult(room.accounts.red, room.accounts.blue, 'draw');
+      room.ratedResultRecorded = true;
+    }
+    ack?.({ ok: true });
+    broadcast(room);
+  });
+
   socket.on('chatMessage', ({ text } = {}, ack) => {
     const meta = socketRoom.get(socket.id);
-    if (!meta) return ack?.({ ok: false, error: 'Join a room first.' });
+    if (!meta || meta.spectator) return ack?.({ ok: false, error: 'Join a player seat first.' });
     const room = rooms.get(meta.code);
     const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_CHAT);
     if (!clean) return ack?.({ ok: false, error: 'Message is empty.' });
@@ -788,11 +939,46 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  socket.on('leaveRoom', (_, ack) => {
+    const meta = socketRoom.get(socket.id);
+    if (!meta) return ack?.({ ok: true });
+    const room = rooms.get(meta.code);
+    if (!room) {
+      socketRoom.delete(socket.id);
+      return ack?.({ ok: true });
+    }
+    if (meta.spectator) {
+      room.spectators.delete(socket.id);
+      socketRoom.delete(socket.id);
+      ack?.({ ok: true });
+      return broadcast(room);
+    }
+    if (room.players[meta.player] === socket.id) room.players[meta.player] = null;
+    room.ready[meta.player] = false;
+    cancelCountdown(room);
+    if (room.phase === 'playing' && !room.winner) {
+      room.winner = opponentOf(meta.player);
+      room.winReason = `${meta.player.toUpperCase()} left the game and forfeited.`;
+      addHistory(room, room.winReason, 'win');
+      cancelTurnTimer(room);
+    } else {
+      addHistory(room, `${meta.player.toUpperCase()} left the room.`, 'system');
+    }
+    socketRoom.delete(socket.id);
+    ack?.({ ok: true });
+    broadcast(room);
+  });
+
   socket.on('disconnect', () => {
     const meta = socketRoom.get(socket.id);
     if (!meta) return;
     const room = rooms.get(meta.code);
     if (!room) return;
+    if (meta.spectator) {
+      room.spectators.delete(socket.id);
+      socketRoom.delete(socket.id);
+      return broadcast(room);
+    }
     if (room.players[meta.player] === socket.id) room.players[meta.player] = null;
     if (['setup', 'countdown'].includes(room.phase)) {
       room.ready[meta.player] = false;

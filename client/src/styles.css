@@ -168,6 +168,44 @@ button {
   animation: dangerPulse 850ms ease-in-out infinite;
 }
 
+.dual-clock {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.clock-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(120, 113, 108, 0.55);
+  border-radius: 6px;
+  background: rgba(12, 10, 9, 0.45);
+  padding: 10px 12px;
+}
+
+.clock-chip.active {
+  border-color: rgba(110, 231, 183, 0.75);
+}
+
+.clock-chip.urgent {
+  border-color: rgba(248, 113, 113, 0.85);
+}
+
+.clock-label {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(168, 162, 158);
+}
+
+.clock-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 20px;
+  font-weight: 950;
+}
+
 .timer-track {
   margin-top: 8px;
   height: 8px;
@@ -223,6 +261,26 @@ button {
   transition: transform 180ms ease;
 }
 
+.board-theme-forest {
+  box-shadow: 0 24px 80px rgba(20, 83, 45, 0.38);
+}
+
+.board-theme-midnight {
+  box-shadow: 0 0 0 1px rgba(103, 232, 249, 0.22), 0 24px 90px rgba(34, 211, 238, 0.2);
+}
+
+.board-theme-sand {
+  box-shadow: 0 24px 80px rgba(146, 64, 14, 0.36);
+}
+
+.board-theme-marble {
+  box-shadow: 0 24px 70px rgba(148, 163, 184, 0.34);
+}
+
+.board-theme-crimson {
+  box-shadow: 0 24px 90px rgba(190, 18, 60, 0.34);
+}
+
 .file-labels {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
@@ -237,6 +295,7 @@ button {
 .board {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
   aspect-ratio: 9 / 8;
   overflow: hidden;
   border: 2px solid rgba(231, 229, 228, 0.25);
@@ -249,6 +308,7 @@ button {
   place-items: center;
   min-width: 0;
   min-height: 0;
+  aspect-ratio: 1;
   border-right: 1px solid rgba(231, 229, 228, 0.2);
   border-bottom: 1px solid rgba(231, 229, 228, 0.2);
   background: rgba(68, 64, 60, 0.38);
@@ -276,7 +336,7 @@ button {
 }
 
 .square.legal::after {
-  content: '1';
+  content: '';
   position: absolute;
   bottom: 8%;
   right: 8%;
@@ -300,6 +360,15 @@ button {
   background: rgba(253, 224, 71, 0.16);
 }
 
+.square.premove {
+  box-shadow: inset 0 0 0 3px rgb(250, 204, 21), 0 0 20px rgba(250, 204, 21, 0.35);
+}
+
+.no-coords .file-labels,
+.no-coords .rank-label {
+  display: none;
+}
+
 .rank-label {
   position: absolute;
   left: 4px;
@@ -313,9 +382,11 @@ button {
 .piece-token {
   display: grid;
   place-items: center;
-  width: 88%;
-  height: 84%;
-  min-height: 38px;
+  width: min(88%, 56px);
+  max-width: 100%;
+  aspect-ratio: 0.9 / 1;
+  height: auto;
+  min-height: 0;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.32);
   color: white;
@@ -338,6 +409,116 @@ button {
   background: linear-gradient(160deg, #075985, #0ea5e9 58%, #082f49);
 }
 
+.piece-token.piece-theme-classic.red {
+  background: linear-gradient(160deg, #78350f, #dc2626 58%, #451a03);
+}
+
+.piece-token.piece-theme-classic.blue {
+  background: linear-gradient(160deg, #1e3a8a, #0284c7 58%, #0f172a);
+}
+
+.piece-token.piece-theme-forest.red {
+  background: linear-gradient(160deg, #365314, #84cc16 55%, #14532d);
+  color: #f7fee7;
+  border-color: rgba(217, 249, 157, 0.8);
+}
+
+.piece-token.piece-theme-forest.blue {
+  background: linear-gradient(160deg, #064e3b, #10b981 55%, #052e16);
+  color: #ecfdf5;
+  border-color: rgba(167, 243, 208, 0.8);
+}
+
+.piece-token.piece-theme-midnight.red {
+  background: linear-gradient(160deg, #4c0519, #e879f9 52%, #111827);
+  color: #fdf4ff;
+  border-color: rgba(240, 171, 252, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25), 0 0 18px rgba(232,121,249,0.35);
+}
+
+.piece-token.piece-theme-midnight.blue {
+  background: linear-gradient(160deg, #083344, #22d3ee 52%, #020617);
+  color: #ecfeff;
+  border-color: rgba(103, 232, 249, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.25), 0 0 18px rgba(34,211,238,0.35);
+}
+
+.piece-token.piece-theme-sand.red {
+  background: linear-gradient(160deg, #7c2d12, #f97316 55%, #431407);
+  color: #fff7ed;
+  border-color: rgba(253, 186, 116, 0.85);
+}
+
+.piece-token.piece-theme-sand.blue {
+  background: linear-gradient(160deg, #164e63, #14b8a6 55%, #083344);
+  color: #f0fdfa;
+  border-color: rgba(94, 234, 212, 0.85);
+}
+
+.piece-token.piece-theme-marble.red {
+  background: linear-gradient(160deg, #f8fafc, #e2e8f0 54%, #94a3b8);
+  color: #7f1d1d;
+  border-color: rgba(30, 41, 59, 0.65);
+}
+
+.piece-token.piece-theme-marble.blue {
+  background: linear-gradient(160deg, #0f172a, #475569 54%, #cbd5e1);
+  color: #f8fafc;
+  border-color: rgba(226, 232, 240, 0.8);
+}
+
+.piece-token.piece-theme-crimson.red {
+  background: linear-gradient(160deg, #450a0a, #fb7185 48%, #7f1d1d);
+  color: #fff1f2;
+  border-color: rgba(253, 164, 175, 0.85);
+}
+
+.piece-token.piece-theme-crimson.blue {
+  background: linear-gradient(160deg, #1e1b4b, #818cf8 48%, #312e81);
+  color: #eef2ff;
+  border-color: rgba(199, 210, 254, 0.85);
+}
+
+.piece-token.piece-theme-custom {
+  backdrop-filter: saturate(1.4) contrast(1.1);
+}
+
+.piece-token::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  pointer-events: none;
+  border-radius: 5px;
+  opacity: 0.28;
+}
+
+.piece-token {
+  position: relative;
+  gap: 2px;
+}
+
+.piece-theme-forest::before {
+  border: 1px dashed currentColor;
+}
+
+.piece-theme-midnight::before {
+  border: 1px solid currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.piece-theme-sand::before {
+  background: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 6px);
+}
+
+.piece-theme-marble::before {
+  background: linear-gradient(135deg, transparent 20%, currentColor 21%, transparent 24%, transparent 56%, currentColor 57%, transparent 60%);
+}
+
+.piece-theme-crimson::before {
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
 .piece-token.hidden-piece {
   background:
     radial-gradient(circle at 50% 34%, rgba(255, 255, 255, 0.16), transparent 24%),
@@ -358,13 +539,55 @@ button {
 
 .piece-token.compact {
   width: 100%;
-  height: 48px;
+  min-height: 48px;
+  gap: 1px;
 }
 
 .piece-code {
-  font-size: clamp(12px, 1.8vw, 21px);
+  font-size: 13px;
   font-weight: 950;
   line-height: 1;
+}
+
+.piece-token:not(.compact) .piece-code {
+  font-size: 15px;
+}
+
+.piece-token.compact .piece-icon svg {
+  max-width: 24px;
+  max-height: 18px;
+}
+
+.piece-icon {
+  display: grid;
+  place-items: center;
+  color: currentColor;
+}
+
+.piece-icon svg {
+  max-width: 42px;
+  max-height: 22px;
+}
+
+.piece-theme-forest .piece-icon svg {
+  filter: drop-shadow(0 1px 0 rgba(5, 46, 22, 0.7));
+}
+
+.piece-theme-midnight .piece-icon svg {
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+.piece-theme-sand .piece-icon svg {
+  transform: rotate(-4deg);
+}
+
+.piece-theme-marble .piece-icon svg {
+  filter: drop-shadow(1px 1px 0 rgba(15, 23, 42, 0.3));
+}
+
+.piece-theme-crimson .piece-icon svg {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 4px rgba(255, 241, 242, 0.45));
 }
 
 .piece-name {
@@ -437,6 +660,29 @@ button {
   gap: 8px;
 }
 
+.tray-panel {
+  margin-top: 14px;
+  border: 1px solid rgba(120, 113, 108, 0.55);
+  border-radius: 8px;
+  background: rgba(12, 10, 9, 0.48);
+  padding: 12px;
+}
+
+.tray-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tray-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .tray-piece {
   border-radius: 6px;
   outline: none;
@@ -464,6 +710,11 @@ button {
 .captured-chip.blue {
   background: rgba(14, 165, 233, 0.18);
   color: rgb(186, 230, 253);
+}
+
+.captured-token {
+  display: inline-block;
+  width: 38px;
 }
 
 .history {
@@ -528,8 +779,56 @@ button {
 
 .chat-row {
   display: flex;
+  align-items: center;
   gap: 7px;
   font-size: 13px;
+}
+
+.chat-avatar,
+.profile-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border-radius: 999px;
+  border: 1px solid rgba(167, 243, 208, 0.5);
+  background: rgba(16, 185, 129, 0.16);
+  color: rgb(167, 243, 208);
+  font-size: 13px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.profile-avatar.small {
+  width: 28px;
+  height: 28px;
+}
+
+.chat-avatar {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.chat-avatar.red {
+  border-color: rgba(252, 165, 165, 0.6);
+  color: rgb(254, 202, 202);
+  background: rgba(239, 68, 68, 0.16);
+}
+
+.chat-avatar.blue {
+  border-color: rgba(125, 211, 252, 0.6);
+  color: rgb(186, 230, 253);
+  background: rgba(14, 165, 233, 0.16);
+}
+
+.chat-avatar img,
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .chat-player {
@@ -569,12 +868,79 @@ button {
   background: rgba(16, 185, 129, 0.18);
 }
 
+.leave-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.2);
+  padding: 9px 12px;
+  color: rgb(254, 202, 202);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .reaction-row {
   justify-content: center;
   border-radius: 999px;
   background: rgba(16, 185, 129, 0.12);
   padding: 5px 8px;
   font-weight: 900;
+}
+
+.board-profiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.player-profile-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 113, 108, 0.55);
+  background: rgba(12, 10, 9, 0.55);
+  padding: 10px 12px;
+}
+
+.player-profile-card.red {
+  border-color: rgba(252, 165, 165, 0.45);
+}
+
+.player-profile-card.blue {
+  border-color: rgba(125, 211, 252, 0.45);
+}
+
+.player-profile-card small,
+.profile-record small {
+  display: block;
+  color: rgb(168, 162, 158);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.player-profile-card b {
+  display: block;
+  overflow: hidden;
+  color: rgb(245, 245, 244);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-record {
+  text-align: right;
+  color: rgb(253, 224, 71);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 950;
 }
 
 .strategy-select {
@@ -691,9 +1057,7 @@ button {
   }
 
   .piece-token {
-    width: 94%;
-    height: 78%;
-    min-height: 26px;
+    width: min(92%, 42px);
   }
 
   .board-wrap {
